@@ -1,7 +1,7 @@
 #ifndef CONFIGDIALOG_H
 #define CONFIGDIALOG_H
 
-/* Fix HMC config/save-load open AV when GetParent(frame) is NULL on NT. */
+/* Config PropertySheet: PSD probes, NULL trackbars, hide CD-DA, keep volume sliders. */
 void InitConfigDialog(void);
 
 #endif
