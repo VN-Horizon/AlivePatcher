@@ -7,6 +7,7 @@
 #define _WIN32_IE 0x0501
 #endif
 #include <commctrl.h>
+#include <prsht.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -158,10 +159,26 @@ static const wchar_t* LookupExact(const wchar_t* s) {
     return hit ? hit->to : NULL;
 }
 
+static const wchar_t kSheetTitle[] = L"Alive renewal的设置";
+
 static const wchar_t* UiLookup(const wchar_t* s) {
     const wchar_t* hit = LookupExact(s);
     if (hit) return hit;
     if (!s || !s[0]) return NULL;
+
+    wchar_t cut[512];
+    wcsncpy(cut, s, 511);
+    cut[511] = 0;
+    wchar_t* suf = wcsstr(cut, L" Properties");
+    if (!suf) suf = wcsstr(cut, L" properties");
+    if (!suf) suf = wcsstr(cut, L"のプロパティ");
+    if (suf) {
+        *suf = 0;
+        while (suf > cut && suf[-1] == L' ') *--suf = 0;
+        hit = LookupExact(cut);
+        if (hit) return hit;
+    }
+    if (wcsncmp(s, L"Alive renewal", 13) == 0) return kSheetTitle;
 
     static const wchar_t kVer[] = L"のバージョン情報";
     const size_t n = wcslen(s);
@@ -195,6 +212,35 @@ static wchar_t* DupW(const wchar_t* s) {
     wchar_t* d = (wchar_t*)HeapAlloc(GetProcessHeap(), 0, n);
     if (d) memcpy(d, s, n);
     return d;
+}
+
+static UINT UiAcp(void) {
+    const UINT acp = GetACP();
+    if (acp == 65001) return CP_UTF8;
+    if (acp == 936 || acp == 950) return acp;
+    return CN_ACP;
+}
+
+static int ToUiAcp(const wchar_t* w, char* out, int max) {
+    return ToNarrow(UiAcp(), w, out, max);
+}
+
+void* UiPatchPropertySheet(void* hdr) {
+    if (!hdr) return hdr;
+    EnsureTable();
+
+    static PROPSHEETHEADERA copy;
+    static char cap[256];
+
+    const DWORD cb = *(const DWORD*)hdr;
+    if (cb < 28 || cb > sizeof(copy)) return hdr;
+    ZeroMemory(&copy, sizeof(copy));
+    memcpy(&copy, hdr, cb);
+
+    copy.dwFlags &= ~PSH_PROPTITLE;
+    ToUiAcp(kSheetTitle, cap, (int)sizeof(cap));
+    copy.pszCaption = cap;
+    return &copy;
 }
 
 wchar_t* UiDupTranslateA(LPCSTR s) {
@@ -368,6 +414,23 @@ void UiApplyDialog(HWND hwnd) {
         child = GetWindow(child, GW_HWNDNEXT);
     }
     TranslateTabs(hwnd);
+    HWND tab = FindWindowExA(hwnd, NULL, "SysTabControl32", NULL);
+    if (tab) {
+        wchar_t cur[256];
+        const int n = GetWindowTextW(hwnd, cur, 256);
+        int isConfig = 0;
+        if (n > 0 && (wcsstr(cur, L"Alive") || wcsstr(cur, L"Properties") || wcsstr(cur, L"renew") ||
+                      wcsstr(cur, L"設定") || wcsstr(cur, kSheetTitle))) {
+            isConfig = 1;
+        } else {
+            char ansi[256];
+            if (GetWindowTextA(hwnd, ansi, 256) > 0 &&
+                (strstr(ansi, "Alive") || strstr(ansi, "Properties") || strstr(ansi, "renew"))) {
+                isConfig = 1;
+            }
+        }
+        if (isConfig && wcscmp(cur, kSheetTitle) != 0) SetWindowTextW(hwnd, kSheetTitle);
+    }
     HMENU menu = GetMenu(hwnd);
     if (menu) {
         UiApplyMenu(menu);

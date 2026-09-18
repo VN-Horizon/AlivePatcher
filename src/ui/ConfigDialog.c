@@ -129,8 +129,10 @@ static void HideCdDaZone(HWND page) {
 static LRESULT CALLBACK OnSheetWndRet(int code, WPARAM wp, LPARAM lp) {
     if (code >= 0 && lp) {
         const CWPRETSTRUCT* msg = (const CWPRETSTRUCT*)lp;
-        if (msg->hwnd && msg->message == WM_INITDIALOG) {
-            if (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP)) {
+        if (msg->hwnd && (msg->message == WM_INITDIALOG || msg->message == WM_SHOWWINDOW ||
+                          msg->message == WM_SETTEXT)) {
+            if (msg->message == WM_INITDIALOG &&
+                (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP))) {
                 HideCdDaZone(msg->hwnd);
             }
             UiApplyDialog(msg->hwnd);
@@ -147,7 +149,8 @@ static LRESULT CALLBACK OnSheetWndRet(int code, WPARAM wp, LPARAM lp) {
 
 static int WINAPI Hook_PropertySheetA(void* hdr) {
     InterlockedIncrement(&g_inPropertySheet);
-    const int r = Real_PropertySheetA ? Real_PropertySheetA(hdr) : 0;
+    void* patched = UiPatchPropertySheet(hdr);
+    const int r = Real_PropertySheetA ? Real_PropertySheetA(patched) : 0;
     InterlockedDecrement(&g_inPropertySheet);
     return r;
 }
