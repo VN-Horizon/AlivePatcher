@@ -96,7 +96,7 @@ target_include_directories(AlivePatcher PRIVATE
         ${ALIVE_THIRD_PARTY})
 target_link_libraries(AlivePatcher PRIVATE comctl32 shell32 gdi32 ole32 m)
 
-# winmm.dll 代理：运行时抽出并 jmp 到 winmm_org（避免 PE forward 在 DllMain 前解析）
+# winmm.dll 代理：抽出 winmm_org 到可写目录并 jmp（避免 PE forward 在 DllMain 前解析）
 set_target_properties(AlivePatcher PROPERTIES
         OUTPUT_NAME "winmm"
         PREFIX ""

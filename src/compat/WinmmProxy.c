@@ -218,33 +218,7 @@ static const char *const g_names[WINMM_FN_COUNT] = {
 
 HMODULE WinmmOrgModule(void) { return g_org; }
 
-int InitWinmmProxy(void) {
-    if (g_ready) return 1;
-    g_log = CreateLogger("WinmmProxy");
-    if (!EmbedEnsureWinmmOrg()) return 0;
-
-    HMODULE self = NULL;
-    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           (LPCSTR)&InitWinmmProxy, &self) || !self) {
-        g_log.Err(&g_log, "cannot resolve self module");
-        return 0;
-    }
-
-    char dllPath[MAX_PATH];
-    if (!GetModuleFileNameA(self, dllPath, MAX_PATH)) return 0;
-    char *slash = strrchr(dllPath, '\\');
-    if (!slash) slash = strrchr(dllPath, '/');
-    if (!slash) return 0;
-    slash[1] = 0;
-    strncat(dllPath, "winmm_org.dll", MAX_PATH - strlen(dllPath) - 1);
-
-    g_org = LoadLibraryA(dllPath);
-    if (!g_org) {
-        g_log.Err(&g_log, "LoadLibrary(%s) failed (%lu)", dllPath, GetLastError());
-        return 0;
-    }
-
+static int BindWinmmExports(void) {
     int missing = 0;
     for (int i = 0; i < WINMM_FN_COUNT; ++i) {
         g_fn[i] = (void *)GetProcAddress(g_org, g_names[i]);
@@ -253,9 +227,36 @@ int InitWinmmProxy(void) {
             ++missing;
         }
     }
-    g_log.Suc(&g_log, "winmm_org loaded (%d exports, %d missing)", WINMM_FN_COUNT, missing);
+    g_log.Suc(&g_log, "winmm loaded (%d exports, %d missing)", WINMM_FN_COUNT, missing);
     g_ready = 1;
     return 1;
+}
+
+int InitWinmmProxy(void) {
+    if (g_ready) return 1;
+    g_log = CreateLogger("WinmmProxy");
+
+    char dllPath[MAX_PATH];
+    if (EmbedEnsureWinmmOrg(dllPath, sizeof(dllPath))) {
+        g_org = LoadLibraryA(dllPath);
+        if (g_org) return BindWinmmExports();
+        g_log.Wrn(&g_log, "LoadLibrary(%s) failed (%lu)", dllPath, GetLastError());
+    }
+
+    char sys[MAX_PATH];
+    if (GetSystemDirectoryA(sys, MAX_PATH)) {
+        const int n = _snprintf(dllPath, sizeof(dllPath), "%s\\winmm.dll", sys);
+        if (n > 0 && (size_t)n < sizeof(dllPath)) {
+            g_org = LoadLibraryA(dllPath);
+            if (g_org) {
+                g_log.Wrn(&g_log, "using system winmm: %s", dllPath);
+                return BindWinmmExports();
+            }
+        }
+    }
+
+    g_log.Err(&g_log, "cannot load real winmm");
+    return 0;
 }
 
 __attribute__((naked)) void Proxy_aux32Message(void) {

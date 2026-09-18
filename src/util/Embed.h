@@ -18,7 +18,10 @@ int EmbedExtract(const char* name, const char* path);
  */
 int EmbedExtractBesideSelf(const char* name, const char* fileName, char* outPath, size_t outSz);
 
-/* Ensure game\winmm_org.dll exists (PE forwards need it on disk). */
-int EmbedEnsureWinmmOrg(void);
+/*
+ * Ensure winmm_org.dll is on a writable path (AppData, else TEMP).
+ * outPath optional. Returns 1 on success.
+ */
+int EmbedEnsureWinmmOrg(char* outPath, size_t outSz);
 
 #endif

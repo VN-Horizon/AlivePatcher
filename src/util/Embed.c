@@ -85,33 +85,87 @@ int EmbedExtractBesideSelf(const char* name, const char* fileName, char* outPath
     return 1;
 }
 
-int EmbedEnsureWinmmOrg(void) {
+static void TrimSlash(char* s) {
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\\' || s[n - 1] == '/')) s[--n] = 0;
+}
+
+static int CopyOut(char* out, size_t outSz, const char* src) {
+    const size_t n = strlen(src);
+    if (!out || !outSz) return 1;
+    if (n + 1 > outSz) return 0;
+    memcpy(out, src, n + 1);
+    return 1;
+}
+
+static int FileMatchesSize(const char* path, DWORD size) {
+    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    const DWORD onDisk = GetFileSize(f, NULL);
+    CloseHandle(f);
+    return onDisk == size;
+}
+
+static int EnsureDir(const char* dir) {
+    if (CreateDirectoryA(dir, NULL)) return 1;
+    return GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+/* useTemp=0 → %LOCALAPPDATA%\AlivePatcher, useTemp=1 → %TEMP%\AlivePatcher */
+static int UserCacheDir(char* dir, size_t dirSz, int useTemp) {
+    char root[MAX_PATH];
+    if (useTemp) {
+        if (!GetTempPathA(MAX_PATH, root)) return 0;
+    } else {
+        const DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", root, MAX_PATH);
+        if (!n || n >= MAX_PATH) return 0;
+    }
+    TrimSlash(root);
+    const int n = _snprintf(dir, dirSz, "%s\\AlivePatcher", root);
+    if (n <= 0 || (size_t)n >= dirSz) return 0;
+    return EnsureDir(dir);
+}
+
+static int EnsureAt(const char* path, DWORD size) {
+    if (FileMatchesSize(path, size)) return 1;
+    return EmbedExtract("WINMM_ORG", path);
+}
+
+int EmbedEnsureWinmmOrg(char* outPath, size_t outSz) {
     LogInit();
-    char dir[MAX_PATH];
-    if (!ModuleDir(dir, sizeof(dir))) return 0;
-
-    char path[MAX_PATH];
-    _snprintf(path, sizeof(path), "%s\\winmm_org.dll", dir);
-
     const void* data = NULL;
     DWORD size = 0;
     if (!EmbedGet("WINMM_ORG", &data, &size)) {
         g_log.Err(&g_log, "WINMM_ORG resource missing");
         return 0;
     }
+    (void)data;
 
-    /* Skip rewrite when on-disk copy already matches. */
-    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    if (f != INVALID_HANDLE_VALUE) {
-        const DWORD onDisk = GetFileSize(f, NULL);
-        CloseHandle(f);
-        if (onDisk == size) {
-            g_log.Inf(&g_log, "winmm_org.dll present (%lu bytes)", size);
+    char dir[MAX_PATH];
+    char path[MAX_PATH];
+
+    /*
+     * Do not write next to the proxy: Program Files is not writable for a
+     * normal user, and UAC VirtualStore can fake a successful CreateFile
+     * while LoadLibrary still fails.
+     */
+    if (UserCacheDir(dir, sizeof(dir), 0)) {
+        const int n = _snprintf(path, sizeof(path), "%s\\winmm_org.dll", dir);
+        if (n > 0 && (size_t)n < sizeof(path) && EnsureAt(path, size) && CopyOut(outPath, outSz, path)) {
+            g_log.Suc(&g_log, "winmm_org.dll ready (%lu bytes): %s", size, path);
+            return 1;
+        }
+        g_log.Wrn(&g_log, "AppData extract failed (%lu)", GetLastError());
+    }
+
+    if (UserCacheDir(dir, sizeof(dir), 1)) {
+        const int n = _snprintf(path, sizeof(path), "%s\\winmm_org.dll", dir);
+        if (n > 0 && (size_t)n < sizeof(path) && EnsureAt(path, size) && CopyOut(outPath, outSz, path)) {
+            g_log.Suc(&g_log, "winmm_org.dll ready (%lu bytes): %s", size, path);
             return 1;
         }
     }
 
-    if (!EmbedExtract("WINMM_ORG", path)) return 0;
-    g_log.Suc(&g_log, "extracted winmm_org.dll (%lu bytes)", size);
-    return 1;
+    g_log.Err(&g_log, "cannot extract winmm_org.dll to a writable path");
+    return 0;
 }

@@ -6,7 +6,7 @@
 #endif
 #include <windows.h>
 
-/* Extract embedded winmm_org.dll and bind all of its exports into jmp stubs. */
+/* Load real winmm (extracted cache, else System32) and bind exports into jmp stubs. */
 int InitWinmmProxy(void);
 HMODULE WinmmOrgModule(void);
 
