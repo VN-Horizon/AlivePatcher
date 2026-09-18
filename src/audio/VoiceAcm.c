@@ -105,8 +105,9 @@ static DWORD WINAPI InstallWorker(LPVOID param) {
               g_vorbisPath, g_exePath);
 
     MessageBoxW(NULL,
-                L"AlivePatcher will install the Vorbis voice codec (one-time Administrator prompt), "
-                L"then restart the game.\n\nClick OK, then Yes on UAC.",
+                L"没有检测到 Vorbis 语音编码器, 需要安装才可以正常播放角色语音。\n\n"
+                L"AlivePatcher 将会申请管理员权限并安装 Vorbis 语音编码器, "
+                L"然后重启游戏.\n\n点击确定, 然后点击 UAC 中的确定.",
                 L"AlivePatcher", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
 
     STARTUPINFOA si;
@@ -115,7 +116,7 @@ static DWORD WINAPI InstallWorker(LPVOID param) {
     ZeroMemory(&pi, sizeof(pi));
     si.cb = sizeof(si);
     if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, g_gameDir, &si, &pi)) {
-        MessageBoxW(NULL, L"Failed to start installer.", L"AlivePatcher", MB_OK | MB_ICONERROR);
+        MessageBoxW(NULL, L"启动安装程序失败.", L"AlivePatcher", MB_OK | MB_ICONERROR);
         ExitProcess(1);
     }
     CloseHandle(pi.hThread);

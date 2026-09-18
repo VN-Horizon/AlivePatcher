@@ -177,8 +177,9 @@ static const wchar_t* UiLookup(const wchar_t* s) {
         while (suf > cut && suf[-1] == L' ') *--suf = 0;
         hit = LookupExact(cut);
         if (hit) return hit;
+        /* PSH_PROPTITLE only: "Alive renewal Properties", not the game frame title. */
+        if (wcsncmp(cut, L"Alive renewal", 13) == 0) return kSheetTitle;
     }
-    if (wcsncmp(s, L"Alive renewal", 13) == 0) return kSheetTitle;
 
     static const wchar_t kVer[] = L"のバージョン情報";
     const size_t n = wcslen(s);
@@ -419,13 +420,12 @@ void UiApplyDialog(HWND hwnd) {
         wchar_t cur[256];
         const int n = GetWindowTextW(hwnd, cur, 256);
         int isConfig = 0;
-        if (n > 0 && (wcsstr(cur, L"Alive") || wcsstr(cur, L"Properties") || wcsstr(cur, L"renew") ||
-                      wcsstr(cur, L"設定") || wcsstr(cur, kSheetTitle))) {
+        if (n > 0 && (wcsstr(cur, L"Properties") || wcsstr(cur, L"プロパティ") || wcsstr(cur, L"設定") ||
+                      wcsstr(cur, kSheetTitle))) {
             isConfig = 1;
         } else {
             char ansi[256];
-            if (GetWindowTextA(hwnd, ansi, 256) > 0 &&
-                (strstr(ansi, "Alive") || strstr(ansi, "Properties") || strstr(ansi, "renew"))) {
+            if (GetWindowTextA(hwnd, ansi, 256) > 0 && (strstr(ansi, "Properties") || strstr(ansi, "設定"))) {
                 isConfig = 1;
             }
         }

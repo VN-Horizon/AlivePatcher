@@ -126,16 +126,50 @@ static void HideCdDaZone(HWND page) {
     }
 }
 
+static int IsConfigPage(HWND h) {
+    return h && (GetDlgItem(h, ID_VOL_BGM) || GetDlgItem(h, ID_CDDA_COMBO) ||
+                 GetDlgItem(h, ID_SAVE_SLOT1) || GetDlgItem(h, ID_CDDA_PATH0_TOP));
+}
+
+static int IsDialogWnd(HWND h) {
+    char cls[32];
+    return h && GetClassNameA(h, cls, (int)sizeof(cls)) && strcmp(cls, "#32770") == 0;
+}
+
+/* Game frame is not a dialog; translating it rewrote the title to the sheet caption. */
+static int InDialogTree(HWND h) {
+    while (h) {
+        if (IsDialogWnd(h)) return 1;
+        HWND next = GetParent(h);
+        if (!next || next == h) break;
+        h = next;
+    }
+    return 0;
+}
+
+/* CALLWNDPROC runs before the dialog proc, so the probe VEH sees the flag. */
+static LRESULT CALLBACK OnSheetWnd(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && lp) {
+        const CWPSTRUCT* msg = (const CWPSTRUCT*)lp;
+        if (msg->message == WM_INITDIALOG && IsConfigPage(msg->hwnd)) {
+            InterlockedIncrement(&g_inPropertySheet);
+        }
+    }
+    return CallNextHookEx(NULL, code, wp, lp);
+}
+
 static LRESULT CALLBACK OnSheetWndRet(int code, WPARAM wp, LPARAM lp) {
     if (code >= 0 && lp) {
         const CWPRETSTRUCT* msg = (const CWPRETSTRUCT*)lp;
         if (msg->hwnd && (msg->message == WM_INITDIALOG || msg->message == WM_SHOWWINDOW ||
                           msg->message == WM_SETTEXT)) {
-            if (msg->message == WM_INITDIALOG &&
-                (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP))) {
-                HideCdDaZone(msg->hwnd);
+            if (msg->message == WM_INITDIALOG && IsConfigPage(msg->hwnd)) {
+                InterlockedDecrement(&g_inPropertySheet);
+                if (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP)) {
+                    HideCdDaZone(msg->hwnd);
+                }
             }
-            UiApplyDialog(msg->hwnd);
+            if (InDialogTree(msg->hwnd)) UiApplyDialog(msg->hwnd);
         } else if (msg->hwnd && (msg->message == WM_CREATE || msg->message == WM_INITMENU)) {
             HMENU menu = GetMenu(msg->hwnd);
             if (menu) {
@@ -209,6 +243,12 @@ static LONG CALLBACK OnParserProbeAv(PEXCEPTION_POINTERS ep) {
     const DWORD rva = ep->ContextRecord->Eip - (DWORD)(uintptr_t)exe;
     CONTEXT* ctx = ep->ContextRecord;
 
+    /* sub_407F80: get-child(0/1) is NULL when a trackbar notifies during init. */
+    if (ctx->Edi == 0 && rva >= 0x8029 && rva <= 0x807E) {
+        ctx->Eip = (DWORD)(uintptr_t)(exe + (rva < 0x8058 ? 0x8058u : 0x8081u));
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
     if (!g_inPropertySheet) return EXCEPTION_CONTINUE_SEARCH;
 
     /* Config PropertySheet: treat the probe as "not a PSD" (fail epilogue). */
@@ -217,9 +257,15 @@ static LONG CALLBACK OnParserProbeAv(PEXCEPTION_POINTERS ep) {
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
-    /* sub_407F80: get-child(0/1) is NULL when a trackbar notifies during init. */
-    if (ctx->Edi == 0 && rva >= 0x8029 && rva <= 0x807E) {
-        ctx->Eip = (DWORD)(uintptr_t)(exe + (rva < 0x8058 ? 0x8058u : 0x8081u));
+    /*
+     * sub_68FC50: mov edx,[eax] after push ebp. START01.PSD / save thumbs probe
+     * an unmapped pointer here; Win7+ turns that into c000041d inside the sheet.
+     * Pop the saved ebp, then the return-0 epilogue (same stack as the jz).
+     */
+    if (rva == 0x28FC77) {
+        ctx->Ebp = *(DWORD*)(uintptr_t)ctx->Esp;
+        ctx->Esp += 4;
+        ctx->Eip = (DWORD)(uintptr_t)(exe + 0x28FCBA);
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     return EXCEPTION_CONTINUE_SEARCH;
@@ -266,6 +312,9 @@ void InitConfigDialog(void) {
     PatchSkipCdDaInit((BYTE*)exe);
     PatchEnableCtrl((BYTE*)exe);
 
+    if (!SetWindowsHookExW(WH_CALLWNDPROC, OnSheetWnd, NULL, GetCurrentThreadId())) {
+        g_log.Wrn(&g_log, "WH_CALLWNDPROC hook failed (%lu)", GetLastError());
+    }
     if (!SetWindowsHookExW(WH_CALLWNDPROCRET, OnSheetWndRet, NULL, GetCurrentThreadId())) {
         g_log.Wrn(&g_log, "WM_INITDIALOG hook failed (%lu)", GetLastError());
     }
