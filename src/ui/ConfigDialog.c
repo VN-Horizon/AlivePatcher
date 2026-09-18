@@ -2,6 +2,7 @@
 
 #include "IatHook.h"
 #include "Logger.h"
+#include "UiText.h"
 
 #include <string.h>
 
@@ -128,9 +129,17 @@ static void HideCdDaZone(HWND page) {
 static LRESULT CALLBACK OnSheetWndRet(int code, WPARAM wp, LPARAM lp) {
     if (code >= 0 && lp) {
         const CWPRETSTRUCT* msg = (const CWPRETSTRUCT*)lp;
-        if (msg->message == WM_INITDIALOG && msg->hwnd &&
-            (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP))) {
-            HideCdDaZone(msg->hwnd);
+        if (msg->hwnd && msg->message == WM_INITDIALOG) {
+            if (GetDlgItem(msg->hwnd, ID_CDDA_COMBO) || GetDlgItem(msg->hwnd, ID_CDDA_PATH0_TOP)) {
+                HideCdDaZone(msg->hwnd);
+            }
+            UiApplyDialog(msg->hwnd);
+        } else if (msg->hwnd && (msg->message == WM_CREATE || msg->message == WM_INITMENU)) {
+            HMENU menu = GetMenu(msg->hwnd);
+            if (menu) {
+                UiApplyMenu(menu);
+                DrawMenuBar(msg->hwnd);
+            }
         }
     }
     return CallNextHookEx(NULL, code, wp, lp);
@@ -138,9 +147,7 @@ static LRESULT CALLBACK OnSheetWndRet(int code, WPARAM wp, LPARAM lp) {
 
 static int WINAPI Hook_PropertySheetA(void* hdr) {
     InterlockedIncrement(&g_inPropertySheet);
-    const HHOOK hide = SetWindowsHookExW(WH_CALLWNDPROCRET, OnSheetWndRet, NULL, GetCurrentThreadId());
     const int r = Real_PropertySheetA ? Real_PropertySheetA(hdr) : 0;
-    if (hide) UnhookWindowsHookEx(hide);
     InterlockedDecrement(&g_inPropertySheet);
     return r;
 }
@@ -256,10 +263,14 @@ void InitConfigDialog(void) {
     PatchSkipCdDaInit((BYTE*)exe);
     PatchEnableCtrl((BYTE*)exe);
 
+    if (!SetWindowsHookExW(WH_CALLWNDPROCRET, OnSheetWndRet, NULL, GetCurrentThreadId())) {
+        g_log.Wrn(&g_log, "WM_INITDIALOG hook failed (%lu)", GetLastError());
+    }
+
     Real_PropertySheetA = (PropertySheetAFn)GetProcAddress(GetModuleHandleW(L"comctl32.dll"), "PropertySheetA");
     static const IatHookEntry hooks[] = {
         {"COMCTL32.dll", "PropertySheetA", Hook_PropertySheetA, (void**)&Real_PropertySheetA},
     };
     const int n = IatHookAll(exe, hooks, sizeof(hooks) / sizeof(hooks[0]), OnIatMissing, (void*)&g_log);
-    g_log.Suc(&g_log, "PropertySheetA probe guard ready (hooks=%d)", n);
+    g_log.Suc(&g_log, "PropertySheetA probe guard ready (hooks=%d), UI translate on WM_INITDIALOG", n);
 }

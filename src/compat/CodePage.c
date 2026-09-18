@@ -2,8 +2,10 @@
 
 #include "IatHook.h"
 #include "Logger.h"
+#include "UiText.h"
 
 #include <commctrl.h>
+#include <string.h>
 
 enum { GAME_ACP = 932 }; /* Shift-JIS */
 
@@ -11,6 +13,7 @@ static LRESULT(WINAPI* Real_SendMessageA)(HWND, UINT, WPARAM, LPARAM);
 static BOOL(WINAPI* Real_PostMessageA)(HWND, UINT, WPARAM, LPARAM);
 static HWND(WINAPI* Real_CreateWindowExA)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU,
                                           HINSTANCE, LPVOID);
+static HMENU(WINAPI* Real_LoadMenuA)(HINSTANCE, LPCSTR);
 
 static void HeapFreePtr(void* p) {
     if (p) HeapFree(GetProcessHeap(), 0, p);
@@ -25,16 +28,16 @@ static wchar_t* DupAtoW(LPCSTR s) {
     return w;
 }
 
-static LPCWSTR ResAtoW(LPCSTR s, wchar_t** heap) {
+static LPCWSTR ResAtoW(LPCSTR s, wchar_t** heap, int translate) {
     *heap = NULL;
     if (!s) return NULL;
     if (IS_INTRESOURCE(s)) return (LPCWSTR)s;
-    return *heap = DupAtoW(s);
+    return *heap = translate ? UiDupTranslateA(s) : DupAtoW(s);
 }
 
 static int WINAPI Hook_MessageBoxA(HWND hwnd, LPCSTR text, LPCSTR caption, UINT type) {
-    wchar_t* t = DupAtoW(text);
-    wchar_t* c = DupAtoW(caption);
+    wchar_t* t = UiDupTranslateA(text);
+    wchar_t* c = UiDupTranslateA(caption);
     const int r = MessageBoxW(hwnd, t, c, type);
     HeapFreePtr(t);
     HeapFreePtr(c);
@@ -48,10 +51,10 @@ static int WINAPI Hook_MessageBoxIndirectA(const MSGBOXPARAMSA* a) {
     MSGBOXPARAMSW w = {.cbSize = sizeof(w),
                        .hwndOwner = a->hwndOwner,
                        .hInstance = a->hInstance,
-                       .lpszText = ResAtoW(a->lpszText, &text),
-                       .lpszCaption = ResAtoW(a->lpszCaption, &caption),
+                       .lpszText = ResAtoW(a->lpszText, &text, 1),
+                       .lpszCaption = ResAtoW(a->lpszCaption, &caption, 1),
                        .dwStyle = a->dwStyle,
-                       .lpszIcon = ResAtoW(a->lpszIcon, &icon),
+                       .lpszIcon = ResAtoW(a->lpszIcon, &icon, 0),
                        .dwContextHelpId = a->dwContextHelpId,
                        .lpfnMsgBoxCallback = a->lpfnMsgBoxCallback,
                        .dwLanguageId = a->dwLanguageId};
@@ -64,7 +67,7 @@ static int WINAPI Hook_MessageBoxIndirectA(const MSGBOXPARAMSA* a) {
 }
 
 static BOOL WINAPI Hook_SetWindowTextA(HWND hwnd, LPCSTR s) {
-    wchar_t* w = DupAtoW(s);
+    wchar_t* w = UiDupTranslateA(s);
     const BOOL ok = SetWindowTextW(hwnd, w);
     HeapFreePtr(w);
     return ok;
@@ -77,16 +80,28 @@ static HWND WINAPI Hook_CreateWindowExA(DWORD ex, LPCSTR cls, LPCSTR name, DWORD
      * CreateWindowExW made Unicode windows and config/property sheets crashed.
      * Class names are ASCII; convert only the title via SetWindowTextW.
      */
+    HWND hwnd;
     if (!name || IS_INTRESOURCE(name)) {
-        return Real_CreateWindowExA(ex, cls, name, style, x, y, cx, cy, parent, menu, hi, param);
+        hwnd = Real_CreateWindowExA(ex, cls, name, style, x, y, cx, cy, parent, menu, hi, param);
+    } else {
+        hwnd = Real_CreateWindowExA(ex, cls, NULL, style, x, y, cx, cy, parent, menu, hi, param);
+        if (hwnd && name[0]) {
+            wchar_t* w = UiDupTranslateA(name);
+            SetWindowTextW(hwnd, w);
+            HeapFreePtr(w);
+        }
     }
-    HWND hwnd = Real_CreateWindowExA(ex, cls, NULL, style, x, y, cx, cy, parent, menu, hi, param);
-    if (hwnd && name[0]) {
-        wchar_t* w = DupAtoW(name);
-        SetWindowTextW(hwnd, w);
-        HeapFreePtr(w);
+    if (hwnd) {
+        HMENU m = GetMenu(hwnd);
+        if (m) UiApplyMenu(m);
     }
     return hwnd;
+}
+
+static HMENU WINAPI Hook_LoadMenuA(HINSTANCE hi, LPCSTR name) {
+    HMENU menu = Real_LoadMenuA ? Real_LoadMenuA(hi, name) : LoadMenuA(hi, name);
+    if (menu) UiApplyMenu(menu);
+    return menu;
 }
 
 /* A/W message ids differ for property-sheet title. */
@@ -104,9 +119,25 @@ static int IsSetStringMsg(UINT msg) {
            msg == CB_FINDSTRING || msg == CB_FINDSTRINGEXACT || msg == CB_SELECTSTRING;
 }
 
+static LRESULT SendTabItemW(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    const TCITEMA* a = (const TCITEMA*)lp;
+    if (!a || !(a->mask & TCIF_TEXT) || !a->pszText) {
+        return Real_SendMessageA(hwnd, msg, wp, lp);
+    }
+    wchar_t* w = UiDupTranslateA(a->pszText);
+    TCITEMW t;
+    memcpy(&t, a, sizeof(TCITEMA));
+    t.pszText = w;
+    const UINT wm = (msg == TCM_INSERTITEMA) ? TCM_INSERTITEMW : TCM_SETITEMW;
+    const LRESULT r = SendMessageW(hwnd, wm, wp, (LPARAM)&t);
+    HeapFreePtr(w);
+    return r;
+}
+
 static LRESULT WINAPI Hook_SendMessageA(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if ((msg == TCM_INSERTITEMA || msg == TCM_SETITEMA) && lp) return SendTabItemW(hwnd, msg, wp, lp);
     if (!IsSetStringMsg(msg) || !lp) return Real_SendMessageA(hwnd, msg, wp, lp);
-    wchar_t* w = DupAtoW((LPCSTR)lp);
+    wchar_t* w = UiDupTranslateA((LPCSTR)lp);
     const LRESULT r = SendMessageW(hwnd, StringMsgToW(msg), wp, (LPARAM)w);
     HeapFreePtr(w);
     return r;
@@ -114,7 +145,7 @@ static LRESULT WINAPI Hook_SendMessageA(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
 
 static BOOL WINAPI Hook_PostMessageA(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (!IsSetStringMsg(msg) || !lp) return Real_PostMessageA(hwnd, msg, wp, lp);
-    wchar_t* w = DupAtoW((LPCSTR)lp);
+    wchar_t* w = UiDupTranslateA((LPCSTR)lp);
     /* PostMessage must keep the buffer until delivered; use SendMessageW for title updates. */
     const BOOL ok = (BOOL)SendMessageW(hwnd, StringMsgToW(msg), wp, (LPARAM)w);
     HeapFreePtr(w);
@@ -134,9 +165,12 @@ void InitShiftJisCompat(void) {
         return;
     }
 
+    InitUiText();
+
     Real_SendMessageA = SendMessageA;
     Real_PostMessageA = PostMessageA;
     Real_CreateWindowExA = CreateWindowExA;
+    Real_LoadMenuA = LoadMenuA;
 
     /*
      * Do not redirect DialogBox/PropertySheet/CreateWindow to W APIs: HMC swaps
@@ -147,10 +181,11 @@ void InitShiftJisCompat(void) {
         {"USER32.dll", "MessageBoxIndirectA", Hook_MessageBoxIndirectA, NULL},
         {"USER32.dll", "SetWindowTextA", Hook_SetWindowTextA, NULL},
         {"USER32.dll", "CreateWindowExA", Hook_CreateWindowExA, (void**)&Real_CreateWindowExA},
+        {"USER32.dll", "LoadMenuA", Hook_LoadMenuA, (void**)&Real_LoadMenuA},
         {"USER32.dll", "SendMessageA", Hook_SendMessageA, (void**)&Real_SendMessageA},
         {"USER32.dll", "PostMessageA", Hook_PostMessageA, (void**)&Real_PostMessageA},
     };
 
     const int n = IatHookAll(exe, hooks, sizeof(hooks) / sizeof(hooks[0]), OnIatMissing, (void*)&logger);
-    logger.Suc(&logger, "UTF-8 locale compat: %d hooks (system ACP=%u)", n, GetACP());
+    logger.Suc(&logger, "UTF-8 locale + UI translate: %d hooks (system ACP=%u)", n, GetACP());
 }

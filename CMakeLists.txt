@@ -68,6 +68,7 @@ add_library(AlivePatcher SHARED
         ${ALIVE_SRC}/hook/IatHook.c ${ALIVE_SRC}/hook/IatHook.h
         ${ALIVE_SRC}/compat/CodePage.c ${ALIVE_SRC}/compat/CodePage.h
         ${ALIVE_SRC}/ui/ConfigDialog.c ${ALIVE_SRC}/ui/ConfigDialog.h
+        ${ALIVE_SRC}/ui/UiText.c ${ALIVE_SRC}/ui/UiText.h
         ${ALIVE_SRC}/ui/CreditsOverlay.c ${ALIVE_SRC}/ui/CreditsOverlay.h
         ${ALIVE_SRC}/cd/CdCheck.c ${ALIVE_SRC}/cd/CdCheck.h
         ${ALIVE_SRC}/audio/CdAudio.c ${ALIVE_SRC}/audio/CdAudio.h
