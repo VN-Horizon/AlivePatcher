@@ -16,7 +16,7 @@
 
 enum {
     PLAY_BGM_RVA = 0x2DCF0,
-    CHUNK_BYTES = 44100, /* ~0.25s stereo 16-bit @ 44.1k */
+    CHUNK_BYTES = 44100,
     BUFS = 3,
 };
 
@@ -41,14 +41,9 @@ static CRITICAL_SECTION g_lock;
 static char g_playName[64];
 static Logger g_log;
 
-static int IsStopName(const char* name) {
-    return !name || !name[0] || _stricmp(name, "None") == 0;
-}
-
 static int ValidTrackName(const char* name) {
     if (!name || !name[0]) return 0;
     if (strchr(name, '\\') || strchr(name, '/') || strchr(name, ':')) return 0;
-    /* embedded resources are M01..M30 */
     return 1;
 }
 
@@ -71,7 +66,7 @@ static DWORD WINAPI PlayThread(LPVOID param) {
 
     int channels = 0, rate = 0;
     short* pcm = NULL;
-    const int samples = stb_vorbis_decode_memory((const unsigned char*)ogg, (int)oggSize, &channels, &rate, &pcm);
+    const int samples = stb_vorbis_decode_memory(ogg, (int)oggSize, &channels, &rate, &pcm);
     if (samples <= 0 || !pcm || channels < 1 || channels > 2 || rate <= 0) {
         g_log.Err(&g_log, "decode failed: %s (samples=%d ch=%d rate=%d)", name, samples, channels, rate);
         free(pcm);
@@ -229,16 +224,21 @@ static int PlayBgm(const char* name) {
     return 1;
 }
 
-/* Game uses thiscall; stack args match stdcall with 4 params (this stays in ECX). */
 static BOOL __attribute__((stdcall)) Hook_PlayBgm(char* name, unsigned int fade, char* a4, int updateFlag) {
     (void)fade;
     (void)a4;
     (void)updateFlag;
-    if (IsStopName(name)) {
+    if (!name) {
         StopPlayback();
         return TRUE;
     }
-    if (!PlayBgm(name)) StopPlayback();
+    if (!name[0]) return TRUE;
+    if (_stricmp(name, "None") == 0) {
+        StopPlayback();
+        return TRUE;
+    }
+    if (PlayBgm(name)) return TRUE;
+    /* CConfigSound reapplies a CD-DA alias on every toggle; keep the current ogg. */
     return TRUE;
 }
 

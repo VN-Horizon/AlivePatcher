@@ -9,6 +9,8 @@ enum { GAME_ACP = 932 }; /* Shift-JIS */
 
 static LRESULT(WINAPI* Real_SendMessageA)(HWND, UINT, WPARAM, LPARAM);
 static BOOL(WINAPI* Real_PostMessageA)(HWND, UINT, WPARAM, LPARAM);
+static HWND(WINAPI* Real_CreateWindowExA)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU,
+                                          HINSTANCE, LPVOID);
 
 static void HeapFreePtr(void* p) {
     if (p) HeapFree(GetProcessHeap(), 0, p);
@@ -70,11 +72,20 @@ static BOOL WINAPI Hook_SetWindowTextA(HWND hwnd, LPCSTR s) {
 
 static HWND WINAPI Hook_CreateWindowExA(DWORD ex, LPCSTR cls, LPCSTR name, DWORD style, int x, int y, int cx,
                                         int cy, HWND parent, HMENU menu, HINSTANCE hi, LPVOID param) {
-    wchar_t *clsHeap = NULL, *nameHeap = NULL;
-    HWND hwnd = CreateWindowExW(ex, ResAtoW(cls, &clsHeap), ResAtoW(name, &nameHeap), style, x, y, cx, cy, parent,
-                                menu, hi, param);
-    HeapFreePtr(clsHeap);
-    HeapFreePtr(nameHeap);
+    /*
+     * Keep the window ANSI: HMC subclasses with SetWindowLongA / DWL_DLGPROC.
+     * CreateWindowExW made Unicode windows and config/property sheets crashed.
+     * Class names are ASCII; convert only the title via SetWindowTextW.
+     */
+    if (!name || IS_INTRESOURCE(name)) {
+        return Real_CreateWindowExA(ex, cls, name, style, x, y, cx, cy, parent, menu, hi, param);
+    }
+    HWND hwnd = Real_CreateWindowExA(ex, cls, NULL, style, x, y, cx, cy, parent, menu, hi, param);
+    if (hwnd && name[0]) {
+        wchar_t* w = DupAtoW(name);
+        SetWindowTextW(hwnd, w);
+        HeapFreePtr(w);
+    }
     return hwnd;
 }
 
@@ -125,16 +136,17 @@ void InitShiftJisCompat(void) {
 
     Real_SendMessageA = SendMessageA;
     Real_PostMessageA = PostMessageA;
+    Real_CreateWindowExA = CreateWindowExA;
 
     /*
-     * Do not redirect DialogBox/PropertySheet to W APIs: HMC swaps DWL_DLGPROC with
-     * SetWindowLongA, which crashes on Unicode property-sheet pages (see ConfigDialog).
+     * Do not redirect DialogBox/PropertySheet/CreateWindow to W APIs: HMC swaps
+     * DWL_DLGPROC with SetWindowLongA, which crashes on Unicode windows.
      */
     static const IatHookEntry hooks[] = {
         {"USER32.dll", "MessageBoxA", Hook_MessageBoxA, NULL},
         {"USER32.dll", "MessageBoxIndirectA", Hook_MessageBoxIndirectA, NULL},
         {"USER32.dll", "SetWindowTextA", Hook_SetWindowTextA, NULL},
-        {"USER32.dll", "CreateWindowExA", Hook_CreateWindowExA, NULL},
+        {"USER32.dll", "CreateWindowExA", Hook_CreateWindowExA, (void**)&Real_CreateWindowExA},
         {"USER32.dll", "SendMessageA", Hook_SendMessageA, (void**)&Real_SendMessageA},
         {"USER32.dll", "PostMessageA", Hook_PostMessageA, (void**)&Real_PostMessageA},
     };
