@@ -2,11 +2,12 @@
 
 #include "Embed.h"
 #include "Logger.h"
-#include "WinmmProxy.h"
 
+#define COBJMACROS
+#define CINTERFACE
 #include <windows.h>
-#include <mmsystem.h>
-#include <stdio.h>
+#include <xaudio2.h>
+
 #include <string.h>
 #include <stdlib.h>
 
@@ -14,25 +15,14 @@
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
 
-enum {
-    PLAY_BGM_RVA = 0x2DCF0,
-    CHUNK_BYTES = 44100,
-    BUFS = 3,
-};
+enum { PLAY_BGM_RVA = 0x2DCF0 };
 
-typedef MMRESULT(WINAPI* WaveOutOpenFn)(LPHWAVEOUT, UINT, LPCWAVEFORMATEX, DWORD_PTR, DWORD_PTR, DWORD);
-typedef MMRESULT(WINAPI* WaveOutPrepareFn)(HWAVEOUT, LPWAVEHDR, UINT);
-typedef MMRESULT(WINAPI* WaveOutWriteFn)(HWAVEOUT, LPWAVEHDR, UINT);
-typedef MMRESULT(WINAPI* WaveOutUnprepareFn)(HWAVEOUT, LPWAVEHDR, UINT);
-typedef MMRESULT(WINAPI* WaveOutResetFn)(HWAVEOUT);
-typedef MMRESULT(WINAPI* WaveOutCloseFn)(HWAVEOUT);
+typedef HRESULT(WINAPI* XAudio2CreateFn)(IXAudio2**, UINT32, XAUDIO2_PROCESSOR);
 
-static WaveOutOpenFn p_waveOutOpen;
-static WaveOutPrepareFn p_waveOutPrepareHeader;
-static WaveOutWriteFn p_waveOutWrite;
-static WaveOutUnprepareFn p_waveOutUnprepareHeader;
-static WaveOutResetFn p_waveOutReset;
-static WaveOutCloseFn p_waveOutClose;
+static XAudio2CreateFn p_XAudio2Create;
+static HMODULE g_xaudio;
+static IXAudio2* g_xa2;
+static IXAudio2MasteringVoice* g_master;
 
 static volatile LONG g_stop;
 static volatile LONG g_playing;
@@ -44,6 +34,38 @@ static Logger g_log;
 static int ValidTrackName(const char* name) {
     if (!name || !name[0]) return 0;
     if (strchr(name, '\\') || strchr(name, '/') || strchr(name, ':')) return 0;
+    return 1;
+}
+
+static void TeardownXAudio(void) {
+    if (g_master) {
+        IXAudio2MasteringVoice_DestroyVoice(g_master);
+        g_master = NULL;
+    }
+    if (g_xa2) {
+        IXAudio2_Release(g_xa2);
+        g_xa2 = NULL;
+    }
+}
+
+static int EnsureXAudio(void) {
+    if (g_xa2) return 1;
+    if (!p_XAudio2Create) return 0;
+
+    /* Processor 0 = XAUDIO2_USE_DEFAULT_PROCESSOR (modern xaudio2_9). */
+    HRESULT hr = p_XAudio2Create(&g_xa2, 0, 0);
+    if (FAILED(hr) || !g_xa2) {
+        g_log.Err(&g_log, "XAudio2Create failed (%08lX)", (unsigned long)hr);
+        g_xa2 = NULL;
+        return 0;
+    }
+    hr = IXAudio2_CreateMasteringVoice(g_xa2, &g_master, XAUDIO2_DEFAULT_CHANNELS, XAUDIO2_DEFAULT_SAMPLERATE, 0, NULL,
+                                       NULL, AudioCategory_GameMedia);
+    if (FAILED(hr) || !g_master) {
+        g_log.Err(&g_log, "CreateMasteringVoice failed (%08lX)", (unsigned long)hr);
+        TeardownXAudio();
+        return 0;
+    }
     return 1;
 }
 
@@ -86,92 +108,50 @@ static DWORD WINAPI PlayThread(LPVOID param) {
     fmt.nBlockAlign = (WORD)(channels * 2);
     fmt.nAvgBytesPerSec = (DWORD)(rate * channels * 2);
 
-    HANDLE doneEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
-    if (!doneEvent) {
+    if (!EnsureXAudio()) {
         free(pcm);
         InterlockedExchange(&g_playing, 0);
         return 0;
     }
 
-    HWAVEOUT wo = NULL;
-    if (p_waveOutOpen(&wo, WAVE_MAPPER, &fmt, (DWORD_PTR)doneEvent, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR) {
-        g_log.Err(&g_log, "waveOutOpen failed for %s", name);
-        CloseHandle(doneEvent);
+    IXAudio2SourceVoice* voice = NULL;
+    HRESULT hr = IXAudio2_CreateSourceVoice(g_xa2, &voice, &fmt, 0, XAUDIO2_DEFAULT_FREQ_RATIO, NULL, NULL, NULL);
+    if (FAILED(hr) || !voice) {
+        g_log.Err(&g_log, "CreateSourceVoice failed (%08lX)", (unsigned long)hr);
         free(pcm);
         InterlockedExchange(&g_playing, 0);
         return 0;
     }
 
-    BYTE* blocks[BUFS] = {0};
-    WAVEHDR hdrs[BUFS];
-    ZeroMemory(hdrs, sizeof(hdrs));
-    for (int i = 0; i < BUFS; ++i) {
-        blocks[i] = (BYTE*)HeapAlloc(GetProcessHeap(), 0, CHUNK_BYTES);
-        if (!blocks[i]) {
-            g_log.Err(&g_log, "buffer alloc failed");
-            InterlockedExchange(&g_stop, 1);
-            break;
-        }
+    const UINT32 totalBytes = (UINT32)samples * (UINT32)channels * 2u;
+    XAUDIO2_BUFFER buf;
+    ZeroMemory(&buf, sizeof(buf));
+    buf.AudioBytes = totalBytes;
+    buf.pAudioData = (const BYTE*)pcm;
+    buf.Flags = XAUDIO2_END_OF_STREAM;
+
+    hr = IXAudio2SourceVoice_SubmitSourceBuffer(voice, &buf, NULL);
+    if (FAILED(hr)) {
+        g_log.Err(&g_log, "SubmitSourceBuffer failed (%08lX)", (unsigned long)hr);
+        IXAudio2SourceVoice_DestroyVoice(voice);
+        free(pcm);
+        InterlockedExchange(&g_playing, 0);
+        return 0;
     }
 
-    const DWORD totalBytes = (DWORD)samples * (DWORD)channels * 2u;
-    DWORD offset = 0;
-    int next = 0, queued = 0;
     g_log.Inf(&g_log, "playing %s (%d Hz, %d ch, %u bytes)", name, rate, channels, totalBytes);
+    IXAudio2SourceVoice_Start(voice, 0, XAUDIO2_COMMIT_NOW);
 
-    while (!InterlockedCompareExchange(&g_stop, 0, 0) && (offset < totalBytes || queued > 0)) {
-        for (int i = 0; i < BUFS; ++i) {
-            if ((hdrs[i].dwFlags & WHDR_PREPARED) && (hdrs[i].dwFlags & WHDR_DONE)) {
-                p_waveOutUnprepareHeader(wo, &hdrs[i], sizeof(WAVEHDR));
-                hdrs[i].dwFlags = 0;
-                --queued;
-            }
-        }
-
-        while (!InterlockedCompareExchange(&g_stop, 0, 0) && offset < totalBytes && queued < BUFS) {
-            int slot = -1;
-            for (int i = 0; i < BUFS; ++i) {
-                const int s = (next + i) % BUFS;
-                if (!(hdrs[s].dwFlags & WHDR_PREPARED)) {
-                    slot = s;
-                    break;
-                }
-            }
-            if (slot < 0 || !blocks[slot]) break;
-
-            DWORD n = CHUNK_BYTES;
-            if (offset + n > totalBytes) n = totalBytes - offset;
-            n -= n % fmt.nBlockAlign;
-            if (!n) break;
-
-            memcpy(blocks[slot], (BYTE*)pcm + offset, n);
-            ZeroMemory(&hdrs[slot], sizeof(WAVEHDR));
-            hdrs[slot].lpData = (LPSTR)blocks[slot];
-            hdrs[slot].dwBufferLength = n;
-            if (p_waveOutPrepareHeader(wo, &hdrs[slot], sizeof(WAVEHDR)) != MMSYSERR_NOERROR ||
-                p_waveOutWrite(wo, &hdrs[slot], sizeof(WAVEHDR)) != MMSYSERR_NOERROR) {
-                g_log.Err(&g_log, "waveOutWrite failed");
-                InterlockedExchange(&g_stop, 1);
-                break;
-            }
-            offset += n;
-            next = (slot + 1) % BUFS;
-            ++queued;
-        }
-
-        if (queued > 0 && !InterlockedCompareExchange(&g_stop, 0, 0))
-            WaitForSingleObject(doneEvent, 50);
-        else
-            Sleep(5);
+    while (!InterlockedCompareExchange(&g_stop, 0, 0)) {
+        XAUDIO2_VOICE_STATE st;
+        IXAudio2SourceVoice_GetState(voice, &st, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+        if (st.BuffersQueued == 0) break;
+        Sleep(20);
     }
 
-    p_waveOutReset(wo);
-    for (int i = 0; i < BUFS; ++i) {
-        if (hdrs[i].dwFlags & WHDR_PREPARED) p_waveOutUnprepareHeader(wo, &hdrs[i], sizeof(WAVEHDR));
-        if (blocks[i]) HeapFree(GetProcessHeap(), 0, blocks[i]);
-    }
-    p_waveOutClose(wo);
-    CloseHandle(doneEvent);
+    IXAudio2SourceVoice_Stop(voice, 0, XAUDIO2_COMMIT_NOW);
+    IXAudio2SourceVoice_FlushSourceBuffers(voice);
+    IXAudio2SourceVoice_DestroyVoice(voice);
     free(pcm);
     InterlockedExchange(&g_playing, 0);
     return 0;
@@ -259,24 +239,23 @@ static int PatchPlayBgm(void) {
     memcpy(p + 1, &rel, 4);
     VirtualProtect(p, 16, old, &old);
     FlushInstructionCache(GetCurrentProcess(), p, 5);
-    g_log.Suc(&g_log, "PlayBgm hooked @ %p -> %p", (void*)p, (void*)dest);
+    g_log.Suc(&g_log, "PlayBgm hooked @ %p -> %p", (void*)p, (void*)&Hook_PlayBgm);
     return 1;
 }
 
-static int LoadWaveOut(void) {
-    HMODULE org = WinmmOrgModule();
-    if (!org) {
-        g_log.Err(&g_log, "winmm_org.dll not loaded");
+static int LoadXAudio(void) {
+    g_xaudio = LoadLibraryW(L"xaudio2_9.dll");
+    if (!g_xaudio) g_xaudio = LoadLibraryW(L"xaudio2_8.dll");
+    if (!g_xaudio) {
+        g_log.Err(&g_log, "xaudio2_9/8.dll not found (%lu)", GetLastError());
         return 0;
     }
-    p_waveOutOpen = (WaveOutOpenFn)GetProcAddress(org, "waveOutOpen");
-    p_waveOutPrepareHeader = (WaveOutPrepareFn)GetProcAddress(org, "waveOutPrepareHeader");
-    p_waveOutWrite = (WaveOutWriteFn)GetProcAddress(org, "waveOutWrite");
-    p_waveOutUnprepareHeader = (WaveOutUnprepareFn)GetProcAddress(org, "waveOutUnprepareHeader");
-    p_waveOutReset = (WaveOutResetFn)GetProcAddress(org, "waveOutReset");
-    p_waveOutClose = (WaveOutCloseFn)GetProcAddress(org, "waveOutClose");
-    return p_waveOutOpen && p_waveOutWrite && p_waveOutPrepareHeader && p_waveOutUnprepareHeader && p_waveOutReset &&
-           p_waveOutClose;
+    p_XAudio2Create = (XAudio2CreateFn)GetProcAddress(g_xaudio, "XAudio2Create");
+    if (!p_XAudio2Create) {
+        g_log.Err(&g_log, "XAudio2Create missing");
+        return 0;
+    }
+    return 1;
 }
 
 void InitCdAudio(void) {
@@ -284,13 +263,14 @@ void InitCdAudio(void) {
     InitializeCriticalSection(&g_lock);
     g_playName[0] = 0;
 
-    if (!LoadWaveOut()) return;
-    g_log.Suc(&g_log, "BGM from embedded resources");
+    if (!LoadXAudio()) return;
+    g_log.Suc(&g_log, "BGM from embedded resources (XAudio2)");
     PatchPlayBgm();
 }
 
 void ShutdownCdAudio(void) {
     StopPlayback();
+    TeardownXAudio();
     DeleteCriticalSection(&g_lock);
 }
 

@@ -4,7 +4,8 @@ import subprocess
 
 root = Path(r"D:\DNV\Documents\Github\VisualNovelHorizon\AlivePatcher")
 objdump = Path(r"D:\DNV\tiny_softs\cli-bin\mingw32\bin\objdump.exe")
-org = root / "native" / "winmm_org.dll"
+compat = root / "src" / "compat"
+org = root / "assets" / "native" / "winmm_org.dll"
 
 out = subprocess.check_output([str(objdump), "-p", str(org)], text=True, errors="replace")
 names = []
@@ -19,7 +20,7 @@ if not names:
 if "timeGetDevCaps" not in names:
     raise SystemExit("timeGetDevCaps missing from parsed exports")
 
-(root / "winmm.def").write_text(
+(compat / "winmm.def").write_text(
     "LIBRARY winmm.dll\nEXPORTS\n" + "".join(f"    {n} = Proxy_{n}\n" for n in names),
     encoding="utf-8",
 )
@@ -111,8 +112,8 @@ for i, n in enumerate(names):
         "",
     ]
 
-(root / "WinmmProxy.c").write_text("\n".join(lines), encoding="utf-8")
-(root / "WinmmProxy.h").write_text(
+(compat / "WinmmProxy.c").write_text("\n".join(lines), encoding="utf-8")
+(compat / "WinmmProxy.h").write_text(
     """#ifndef WINMMPROXY_H
 #define WINMMPROXY_H
 

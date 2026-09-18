@@ -10,9 +10,13 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
             "or select the mingw32 (i686) toolchain in CLion.")
 endif()
 
+set(ALIVE_SRC "${CMAKE_SOURCE_DIR}/src")
+set(ALIVE_ASSETS "${CMAKE_SOURCE_DIR}/assets")
+set(ALIVE_THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party")
+
 # --- embed winmm_org.dll, vorbis.acm, and bgm/*.ogg as RCDATA ---
-set(EMBED_WINMM_ORG "${CMAKE_SOURCE_DIR}/native/winmm_org.dll")
-set(EMBED_VORBIS_ACM "${CMAKE_SOURCE_DIR}/native/vorbis.acm")
+set(EMBED_WINMM_ORG "${ALIVE_ASSETS}/native/winmm_org.dll")
+set(EMBED_VORBIS_ACM "${ALIVE_ASSETS}/native/vorbis.acm")
 if(NOT EXISTS "${EMBED_WINMM_ORG}")
     message(FATAL_ERROR "Missing ${EMBED_WINMM_ORG} (needed to embed)")
 endif()
@@ -34,7 +38,7 @@ foreach(i RANGE 1 30)
     else()
         set(_id "M${i}")
     endif()
-    set(_ogg "${CMAKE_SOURCE_DIR}/bgm/${_id}.ogg")
+    set(_ogg "${ALIVE_ASSETS}/bgm/${_id}.ogg")
     if(NOT EXISTS "${_ogg}")
         message(FATAL_ERROR "Missing ${_ogg}")
     endif()
@@ -46,20 +50,29 @@ file(WRITE "${EMBED_RC}" "${EMBED_RC_BODY}")
 set_source_files_properties("${EMBED_RC}" PROPERTIES OBJECT_DEPENDS "${EMBED_DEPENDS}")
 
 add_library(AlivePatcher SHARED
-        AlivePatcher.c AlivePatcher.h
-        ModConsole.c ModConsole.h
-        Logger.c Logger.h
-        IatHook.c IatHook.h
-        CodePage.c CodePage.h
-        ConfigDialog.c ConfigDialog.h
-        CdCheck.c CdCheck.h
-        CdAudio.c CdAudio.h
-        VoiceAcm.c VoiceAcm.h
-        Embed.c Embed.h
-        WinmmProxy.c WinmmProxy.h
+        ${ALIVE_SRC}/AlivePatcher.c ${ALIVE_SRC}/AlivePatcher.h
+        ${ALIVE_SRC}/ui/ModConsole.c ${ALIVE_SRC}/ui/ModConsole.h
+        ${ALIVE_SRC}/util/Logger.c ${ALIVE_SRC}/util/Logger.h
+        ${ALIVE_SRC}/hook/IatHook.c ${ALIVE_SRC}/hook/IatHook.h
+        ${ALIVE_SRC}/compat/CodePage.c ${ALIVE_SRC}/compat/CodePage.h
+        ${ALIVE_SRC}/ui/ConfigDialog.c ${ALIVE_SRC}/ui/ConfigDialog.h
+        ${ALIVE_SRC}/cd/CdCheck.c ${ALIVE_SRC}/cd/CdCheck.h
+        ${ALIVE_SRC}/audio/CdAudio.c ${ALIVE_SRC}/audio/CdAudio.h
+        ${ALIVE_SRC}/audio/VoiceAcm.c ${ALIVE_SRC}/audio/VoiceAcm.h
+        ${ALIVE_SRC}/util/Embed.c ${ALIVE_SRC}/util/Embed.h
+        ${ALIVE_SRC}/compat/WinmmProxy.c ${ALIVE_SRC}/compat/WinmmProxy.h
         "${EMBED_RC}"
-        winmm.def)
+        ${ALIVE_SRC}/compat/winmm.def)
 target_compile_definitions(AlivePatcher PRIVATE BUILDING_DLL)
+target_include_directories(AlivePatcher PRIVATE
+        ${ALIVE_SRC}
+        ${ALIVE_SRC}/audio
+        ${ALIVE_SRC}/cd
+        ${ALIVE_SRC}/compat
+        ${ALIVE_SRC}/hook
+        ${ALIVE_SRC}/ui
+        ${ALIVE_SRC}/util
+        ${ALIVE_THIRD_PARTY})
 target_link_libraries(AlivePatcher PRIVATE comctl32 shell32 m)
 
 # winmm.dll 代理：运行时抽出并 jmp 到 winmm_org（避免 PE forward 在 DllMain 前解析）
