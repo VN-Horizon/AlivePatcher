@@ -31,6 +31,47 @@ static CRITICAL_SECTION g_lock;
 static char g_playName[64];
 static Logger g_log;
 
+static const char* const kTrackTitles[30] = {
+    "ALIVE",
+    "Teriru Jingle",
+    "HEAVEN",
+    "LIKE or LOVE",
+    "Inocent CAT",
+    "My fear LADY",
+    "Crime and punishment",
+    "Pure",
+    "Undead",
+    "Poker Face",
+    "The god of death",
+    "Love that clings",
+    "Face off",
+    "Holy Wing",
+    "BIRD SONGS",
+    "Sister",
+    "Afternoon tea",
+    "Hearless",
+    "Sandglass",
+    "The Redemption",
+    "Dreaming",
+    "HEAVEN - orgole ver",
+    "Heartful morning",
+    "Memorial Day",
+    "WHITE SNOW",
+    "ZOOM - type R",
+    "The Crack Of Doom",
+    "Alive Renewal",
+    "Duel !",
+    "KEEP OFF - type R",
+};
+
+static const char* TrackTitle(const char* name) {
+    if (!name || (name[0] != 'M' && name[0] != 'm')) return NULL;
+    if (name[1] < '0' || name[1] > '9' || name[2] < '0' || name[2] > '9' || name[3]) return NULL;
+    const int n = (name[1] - '0') * 10 + (name[2] - '0');
+    if (n < 1 || n > 30) return NULL;
+    return kTrackTitles[n - 1];
+}
+
 static int ValidTrackName(const char* name) {
     if (!name || !name[0]) return 0;
     if (strchr(name, '\\') || strchr(name, '/') || strchr(name, ':')) return 0;
@@ -139,7 +180,12 @@ static DWORD WINAPI PlayThread(LPVOID param) {
         return 0;
     }
 
-    g_log.Inf(&g_log, "playing %s (%d Hz, %d ch, %u bytes)", name, rate, channels, totalBytes);
+    const char* title = TrackTitle(name);
+    if (title) {
+        g_log.Wrn(&g_log, "♫ %s (%s)", title, name);
+    } else {
+        g_log.Wrn(&g_log, "♫ %s", name);
+    }
     IXAudio2SourceVoice_Start(voice, 0, XAUDIO2_COMMIT_NOW);
 
     while (!InterlockedCompareExchange(&g_stop, 0, 0)) {
@@ -259,7 +305,7 @@ static int LoadXAudio(void) {
 }
 
 void InitCdAudio(void) {
-    g_log = CreateLogger("CdAudio");
+    g_log = CreateLogger("BGM");
     InitializeCriticalSection(&g_lock);
     g_playName[0] = 0;
 

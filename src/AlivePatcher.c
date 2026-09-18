@@ -8,6 +8,7 @@
 #include "ConfigDialog.h"
 #include "Embed.h"
 #include "ModConsole.h"
+#include "Translator.h"
 #include "VoiceAcm.h"
 #include "WinmmProxy.h"
 
@@ -35,14 +36,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             /* Must init before any export stub is called (no PE forwards). */
             if (!InitWinmmProxy()) return FALSE;
             if (!b) InitDebugConsole();
-            InitVoiceAcm();
-            /* Installer runs on a worker after DllMain returns; do not init audio yet. */
-            if (VoiceAcmIsRestarting()) break;
-            InitShiftJisCompat();
-            InitConfigDialog();
-            InitCdCheck();
-            InitCdAudio();
-            if (b) break;
 
             logger.Inf(&logger, "");
             logger.Inf(&logger, "░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░");
@@ -61,6 +54,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             else
                 logger.Err(&logger, "你以为创建.nodebug就够了吗？你个傻逼");
 
+            InitVoiceAcm();
+            /* Installer runs on a worker after DllMain returns; do not init audio yet. */
+            if (VoiceAcmIsRestarting()) break;
+            InitShiftJisCompat();
+            InitConfigDialog();
+            InitCdCheck();
+            InitCdAudio();
+            InitTranslator();
             break;
         }
 

@@ -14,14 +14,18 @@ set(ALIVE_SRC "${CMAKE_SOURCE_DIR}/src")
 set(ALIVE_ASSETS "${CMAKE_SOURCE_DIR}/assets")
 set(ALIVE_THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party")
 
-# --- embed winmm_org.dll, vorbis.acm, and bgm/*.ogg as RCDATA ---
+# --- embed winmm_org.dll, vorbis.acm, translation.bin, and bgm/*.ogg as RCDATA ---
 set(EMBED_WINMM_ORG "${ALIVE_ASSETS}/native/winmm_org.dll")
 set(EMBED_VORBIS_ACM "${ALIVE_ASSETS}/native/vorbis.acm")
+set(EMBED_TRANSLATION "${ALIVE_ASSETS}/translation.bin")
 if(NOT EXISTS "${EMBED_WINMM_ORG}")
     message(FATAL_ERROR "Missing ${EMBED_WINMM_ORG} (needed to embed)")
 endif()
 if(NOT EXISTS "${EMBED_VORBIS_ACM}")
     message(FATAL_ERROR "Missing ${EMBED_VORBIS_ACM} (needed to embed)")
+endif()
+if(NOT EXISTS "${EMBED_TRANSLATION}")
+    message(FATAL_ERROR "Missing ${EMBED_TRANSLATION} (needed to embed)")
 endif()
 
 set(EMBED_RC "${CMAKE_CURRENT_BINARY_DIR}/embed_assets.rc")
@@ -29,9 +33,11 @@ set(EMBED_RC_BODY "")
 # windres prefers forward slashes in paths
 file(TO_CMAKE_PATH "${EMBED_WINMM_ORG}" _p_winmm)
 file(TO_CMAKE_PATH "${EMBED_VORBIS_ACM}" _p_vorbis)
+file(TO_CMAKE_PATH "${EMBED_TRANSLATION}" _p_trans)
 string(APPEND EMBED_RC_BODY "WINMM_ORG RCDATA \"${_p_winmm}\"\n")
 string(APPEND EMBED_RC_BODY "VORBIS_ACM RCDATA \"${_p_vorbis}\"\n")
-set(EMBED_DEPENDS "${EMBED_WINMM_ORG};${EMBED_VORBIS_ACM}")
+string(APPEND EMBED_RC_BODY "TRANSLATION RCDATA \"${_p_trans}\"\n")
+set(EMBED_DEPENDS "${EMBED_WINMM_ORG};${EMBED_VORBIS_ACM};${EMBED_TRANSLATION}")
 foreach(i RANGE 1 30)
     if(i LESS 10)
         set(_id "M0${i}")
@@ -61,6 +67,12 @@ add_library(AlivePatcher SHARED
         ${ALIVE_SRC}/audio/VoiceAcm.c ${ALIVE_SRC}/audio/VoiceAcm.h
         ${ALIVE_SRC}/util/Embed.c ${ALIVE_SRC}/util/Embed.h
         ${ALIVE_SRC}/compat/WinmmProxy.c ${ALIVE_SRC}/compat/WinmmProxy.h
+        ${ALIVE_SRC}/hook/InlineHook.c ${ALIVE_SRC}/hook/InlineHook.h
+        ${ALIVE_SRC}/text/TransCodec.c ${ALIVE_SRC}/text/TransCodec.h
+        ${ALIVE_SRC}/text/TransTable.c ${ALIVE_SRC}/text/TransTable.h
+        ${ALIVE_SRC}/text/DialogText.c ${ALIVE_SRC}/text/DialogText.h
+        ${ALIVE_SRC}/text/Backlog.c ${ALIVE_SRC}/text/Backlog.h
+        ${ALIVE_SRC}/text/Translator.c ${ALIVE_SRC}/text/Translator.h
         "${EMBED_RC}"
         ${ALIVE_SRC}/compat/winmm.def)
 target_compile_definitions(AlivePatcher PRIVATE BUILDING_DLL)
@@ -70,10 +82,11 @@ target_include_directories(AlivePatcher PRIVATE
         ${ALIVE_SRC}/cd
         ${ALIVE_SRC}/compat
         ${ALIVE_SRC}/hook
+        ${ALIVE_SRC}/text
         ${ALIVE_SRC}/ui
         ${ALIVE_SRC}/util
         ${ALIVE_THIRD_PARTY})
-target_link_libraries(AlivePatcher PRIVATE comctl32 shell32 m)
+target_link_libraries(AlivePatcher PRIVATE comctl32 shell32 gdi32 m)
 
 # winmm.dll 代理：运行时抽出并 jmp 到 winmm_org（避免 PE forward 在 DllMain 前解析）
 set_target_properties(AlivePatcher PROPERTIES

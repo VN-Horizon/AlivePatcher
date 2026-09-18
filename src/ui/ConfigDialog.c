@@ -228,7 +228,7 @@ static int PatchSkipCdDaInit(BYTE* exe) {
         g_log.Err(&g_log, "VirtualProtect CD-DA skip failed (%lu)", GetLastError());
         return 0;
     }
-    const INT32 rel = (INT32)(RVA_CDDA_AFTER - (RVA_CDDA_INIT + 5));
+    const INT32 rel = RVA_CDDA_AFTER - (RVA_CDDA_INIT + 5);
     p[0] = 0xE9;
     memcpy(p + 1, &rel, 4);
     VirtualProtect(p, 5, old, &old);
