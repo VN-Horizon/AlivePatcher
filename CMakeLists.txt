@@ -14,10 +14,11 @@ set(ALIVE_SRC "${CMAKE_SOURCE_DIR}/src")
 set(ALIVE_ASSETS "${CMAKE_SOURCE_DIR}/assets")
 set(ALIVE_THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party")
 
-# --- embed winmm_org.dll, vorbis.acm, translation.bin, and bgm/*.ogg as RCDATA ---
+# --- embed winmm_org.dll, vorbis.acm, translation.bin, credits.png, and bgm/*.ogg as RCDATA ---
 set(EMBED_WINMM_ORG "${ALIVE_ASSETS}/native/winmm_org.dll")
 set(EMBED_VORBIS_ACM "${ALIVE_ASSETS}/native/vorbis.acm")
 set(EMBED_TRANSLATION "${ALIVE_ASSETS}/translation.bin")
+set(EMBED_CREDITS "${ALIVE_ASSETS}/credits.png")
 if(NOT EXISTS "${EMBED_WINMM_ORG}")
     message(FATAL_ERROR "Missing ${EMBED_WINMM_ORG} (needed to embed)")
 endif()
@@ -27,6 +28,9 @@ endif()
 if(NOT EXISTS "${EMBED_TRANSLATION}")
     message(FATAL_ERROR "Missing ${EMBED_TRANSLATION} (needed to embed)")
 endif()
+if(NOT EXISTS "${EMBED_CREDITS}")
+    message(FATAL_ERROR "Missing ${EMBED_CREDITS} (needed to embed)")
+endif()
 
 set(EMBED_RC "${CMAKE_CURRENT_BINARY_DIR}/embed_assets.rc")
 set(EMBED_RC_BODY "")
@@ -34,10 +38,12 @@ set(EMBED_RC_BODY "")
 file(TO_CMAKE_PATH "${EMBED_WINMM_ORG}" _p_winmm)
 file(TO_CMAKE_PATH "${EMBED_VORBIS_ACM}" _p_vorbis)
 file(TO_CMAKE_PATH "${EMBED_TRANSLATION}" _p_trans)
+file(TO_CMAKE_PATH "${EMBED_CREDITS}" _p_credits)
 string(APPEND EMBED_RC_BODY "WINMM_ORG RCDATA \"${_p_winmm}\"\n")
 string(APPEND EMBED_RC_BODY "VORBIS_ACM RCDATA \"${_p_vorbis}\"\n")
 string(APPEND EMBED_RC_BODY "TRANSLATION RCDATA \"${_p_trans}\"\n")
-set(EMBED_DEPENDS "${EMBED_WINMM_ORG};${EMBED_VORBIS_ACM};${EMBED_TRANSLATION}")
+string(APPEND EMBED_RC_BODY "CREDITS RCDATA \"${_p_credits}\"\n")
+set(EMBED_DEPENDS "${EMBED_WINMM_ORG};${EMBED_VORBIS_ACM};${EMBED_TRANSLATION};${EMBED_CREDITS}")
 foreach(i RANGE 1 30)
     if(i LESS 10)
         set(_id "M0${i}")
@@ -62,6 +68,7 @@ add_library(AlivePatcher SHARED
         ${ALIVE_SRC}/hook/IatHook.c ${ALIVE_SRC}/hook/IatHook.h
         ${ALIVE_SRC}/compat/CodePage.c ${ALIVE_SRC}/compat/CodePage.h
         ${ALIVE_SRC}/ui/ConfigDialog.c ${ALIVE_SRC}/ui/ConfigDialog.h
+        ${ALIVE_SRC}/ui/CreditsOverlay.c ${ALIVE_SRC}/ui/CreditsOverlay.h
         ${ALIVE_SRC}/cd/CdCheck.c ${ALIVE_SRC}/cd/CdCheck.h
         ${ALIVE_SRC}/audio/CdAudio.c ${ALIVE_SRC}/audio/CdAudio.h
         ${ALIVE_SRC}/audio/VoiceAcm.c ${ALIVE_SRC}/audio/VoiceAcm.h

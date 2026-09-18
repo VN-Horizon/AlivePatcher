@@ -6,6 +6,7 @@
 #include "CdCheck.h"
 #include "CodePage.h"
 #include "ConfigDialog.h"
+#include "CreditsOverlay.h"
 #include "Embed.h"
 #include "ModConsole.h"
 #include "Translator.h"
@@ -62,10 +63,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             InitCdCheck();
             InitCdAudio();
             InitTranslator();
+            InitCreditsOverlay();
             break;
         }
 
         case DLL_PROCESS_DETACH:
+            ShutdownCreditsOverlay();
             ShutdownCdAudio();
             FreeConsole();
             break;
