@@ -147,7 +147,7 @@ static int WINAPI Hook_PropertySheetA(void* hdr) {
 
 /*
  * CConfigSound turns BGM/SE/voice sliders off when it thinks CD-DA/mixer
- * inherit is active. Replacement BGM is XAudio2, so keep those controls on.
+ * inherit is active. Replacement BGM is WASAPI, so keep those controls on.
  * HMC::CControl: vtable+0, HWND at +4 (sub_406000).
  */
 static BOOL __attribute__((thiscall)) Hook_EnableCtrl(HWND* ctl, BOOL enable) {

@@ -30,32 +30,9 @@ def open_packed_db() -> Database:
     return Database.open(str(tmp / PACKED_DB.name), args=opts, save_on_close=False)
 
 
-def decomp(ea: int) -> str:
-    import ida_hexrays
-
-    c = ida_hexrays.decompile(ea)
-    return str(c) if c else "<fail>"
-
-
 def main() -> None:
     with open_packed_db() as db:
-        import idautils
-        import idc
-
-        print("===== sub_42EEC0 (other volume setter caller) =====")
-        print(decomp(0x42EEC0))
-        print("\n===== xrefs to sub_42EEC0 =====")
-        for xref in idautils.XrefsTo(0x42EEC0):
-            print(f"  {xref.frm:08X} {idc.get_func_name(xref.frm)}")
-
-        print("\n===== sub_41FE10 (EnableFadeVolume) =====")
-        print(decomp(0x41FE10))
-
-        print("\n===== sub_420520 (EnableFadeVolume) =====")
-        print(decomp(0x420520))
-
-        print("\n===== sub_40BA00 =====")
-        print(decomp(0x40BA00))
+        print("packed db", db)
 
 
 if __name__ == "__main__":
